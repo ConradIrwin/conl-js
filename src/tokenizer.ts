@@ -1,215 +1,146 @@
-import { Token, TokenKind, ParseState } from './types';
-import {
-  lines,
-  splitLiteral,
-  decodeLiteral,
-  checkUtf8,
-  trimLeft,
-  cutPrefix,
-  trimRight,
-} from './utils';
+type TokenKind =
+  | { kind: "indent" }
+  | { kind: "outdent" }
+  | { kind: "item" }
+  | { kind: "key"; content: string }
+  | { kind: "scalar"; content: string }
+  | { kind: "null" };
 
+export type Token = { lno: number } & TokenKind;
+
+/**
+ * Decode a quoted (or unqouted) literal.
+ */
+export function decodeLiteral(lno: number, input: string): string {
+  if (!input.startsWith('"')) {
+    return input;
+  }
+  if (!input.endsWith('"')) {
+    throw new Error(lno + ": unclosed quotes");
+  }
+
+  return input
+    .substring(1, input.length - 1)
+    .replace(/\\\{([0-9a-fA-F]){1,8}\}|\\(.)/g, (match, hex, c) => {
+      switch (c) {
+        case "n":
+          return "\n";
+        case "r":
+          return "\r";
+        case "t":
+          return "\t";
+        case '"':
+          return '"';
+        case "\\":
+          return "\\";
+      }
+
+      const codePoint = parseInt(hex, 16);
+      if (
+        isNaN(codePoint) ||
+        codePoint > 0x10ffff ||
+        (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ) {
+        throw new Error(`invalid escape code: ${match}`);
+      }
+
+      return String.fromCodePoint(codePoint);
+    });
+}
+
+const SPLIT_LINE = new RegExp(
+  `^(` +
+    String.raw`(?:"(?:[^"\\]|\\.)*")?` + // Quoted key
+    `(?:[^=; \t]|[ \t][^=; \t])*` + // Unquoted key
+    `)` +
+    `(?:[ \t]*=[ \t]*(` +
+    String.raw`(?:"(?:[^"\\]|\\.)*")?` + // Quoted value
+    `(?:[^; \t]|[ \t][^; \t])*` + // Unquoted value
+    `))?` +
+    `[ \t]*(?:;|$)`,
+);
 /**
  * Tokenize a CONL input string into raw tokens
  */
-function* tokenize(input: string): Generator<Token, void, unknown> {
-  const stack: string[] = [''];
-  let multiline = false;
-  let multilinePrefix = '';
-  let multilineValue = '';
+function* tokenize(input: string): Generator<Token> {
+  const stack: string[] = [""];
+  let multilineIndent: string | undefined;
+  let multilineValue = "";
   let multilineLno = 0;
 
-  for (const [lno, content] of lines(input)) {
-    const [indent, rest] = trimLeft(content);
+  let lno = 0;
 
-    if (multiline) {
-      if (multilinePrefix === '') {
-        if (indent.startsWith(stack[stack.length - 1]) && indent !== stack[stack.length - 1]) {
-          multilinePrefix = indent;
-          multilineValue = rest;
-          multilineLno = lno;
-          continue;
-        } else if (rest === '') {
-          continue;
-        } else {
-          yield {
-            lno: multilineLno,
-            kind: TokenKind.MultilineScalar,
-            content: '',
-            error: new Error('missing multiline value'),
-          };
-          multiline = false;
-        }
-      } else {
-        if (content.startsWith(multilinePrefix)) {
-          const restContent = content.substring(multilinePrefix.length);
-          multilineValue += '\n' + restContent;
-          continue;
-        } else if (rest === '') {
-          multilineValue += '\n';
-          continue;
-        } else {
-          const finalContent = trimRight(multilineValue, ' \t\r\n');
-          const err = checkUtf8(finalContent);
-          yield {
-            lno: multilineLno,
-            kind: TokenKind.MultilineScalar,
-            content: finalContent,
-            error: err || undefined,
-          };
-          multiline = false;
-          multilinePrefix = '';
-          multilineValue = '';
-        }
+  function* tokenizeLine(indent: string, line: string): Generator<TokenKind> {
+    if (multilineIndent) {
+      if (indent.startsWith(multilineIndent) || line === "") {
+        multilineValue += "\n" + indent.replace(multilineIndent, "") + line;
+        return;
       }
+      yield { kind: "scalar", content: multilineValue };
+      multilineIndent = undefined;
+      multilineValue = "";
+    } else if (multilineIndent === "") {
+      if (line == "") {
+        return;
+      } else if (indent.startsWith(stack.at(-1)!) && indent !== stack.at(-1)) {
+        multilineIndent = indent;
+        multilineValue = line;
+        multilineLno = lno;
+        return;
+      }
+      throw new Error(lno + ": missing multiline value");
     }
 
-    if (rest === '') {
-      continue;
+    if (line === "" || line.startsWith(";")) {
+      return;
     }
 
-    let [comment, found] = cutPrefix(rest, ';');
-    if (found) {
-      yield {
-        lno,
-        kind: TokenKind.Comment,
-        content: comment,
-        error: checkUtf8(comment) || undefined,
-      };
-      continue;
-    }
-
-    // Handle outdents
-    while (!indent.startsWith(stack[stack.length - 1])) {
+    while (!indent.startsWith(stack.at(-1)!)) {
       stack.pop();
-      yield {
-        lno,
-        kind: TokenKind.Outdent,
-        content: '',
-      };
+      yield { kind: "outdent" };
     }
 
-    // Handle indent
     if (indent !== stack[stack.length - 1]) {
       stack.push(indent);
-      yield {
-        lno,
-        kind: TokenKind.Indent,
-        content: indent,
-      };
+      yield { kind: "indent" };
     }
+    let [_, key, tail] = line.match(SPLIT_LINE)!;
 
-    let currentRest = rest;
-
-    // Check for list item
-    let [list, isListItem] = cutPrefix(currentRest, '=');
-    if (isListItem) {
-      const [, trimmedList] = trimLeft(list);
-      currentRest = trimmedList;
-      yield {
-        lno,
-        kind: TokenKind.ListItem,
-        content: '',
-      };
+    if (key) {
+      yield { kind: "key", content: decodeLiteral(lno, key) };
     } else {
-      // Map key
-      const [key, afterKey] = splitLiteral(currentRest, true);
-      const [decodedKey, err] = decodeLiteral(key);
-      yield {
-        lno,
-        kind: TokenKind.MapKey,
-        content: decodedKey,
-        error: err || undefined,
-      };
-      currentRest = afterKey;
-      const [, trimmedRest] = trimLeft(afterKey);
-      currentRest = trimmedRest;
-      const [afterEquals] = cutPrefix(currentRest, '=');
-      if (currentRest !== afterEquals) {
-        currentRest = afterEquals;
-        const [, trimmedAfterEquals] = trimLeft(currentRest);
-        currentRest = trimmedAfterEquals;
-      }
+      yield { kind: "item" };
     }
 
-    // Check for comment after key/list item
-    [comment, found] = cutPrefix(currentRest, ';');
-    if (found) {
-      yield {
-        lno,
-        kind: TokenKind.Comment,
-        content: comment,
-        error: checkUtf8(comment) || undefined,
-      };
-      continue;
+    if (!tail) {
+      return;
     }
 
-    // Check for multiline indicator
-    let [indicator, hasMultiline] = cutPrefix(currentRest, '"""');
-    if (hasMultiline) {
-      const [hint, afterHint] = splitLiteral(indicator, false);
-      multiline = true;
-      multilineLno = lno;
-      yield {
-        lno,
-        kind: TokenKind.MultilineHint,
-        content: hint,
-        error: checkUtf8(hint) || undefined,
-      };
-
-      [comment, found] = cutPrefix(afterHint, ';');
-      if (found) {
-        yield {
-          lno,
-          kind: TokenKind.Comment,
-          content: comment,
-          error: checkUtf8(comment) || undefined,
-        };
-      }
-      continue;
+    if (tail.match(/^"""(?![ \t]*")/)) {
+      multilineIndent = "";
+      return;
     }
 
-    // Regular scalar value
-    const [value, afterValue] = splitLiteral(currentRest, false);
-    if (value !== '') {
-      const [decodedValue, err] = decodeLiteral(value);
-      yield {
-        lno,
-        kind: TokenKind.Scalar,
-        content: decodedValue,
-        error: err || undefined,
-      };
-    }
+    yield { kind: "scalar", content: decodeLiteral(lno, tail) };
+  }
 
-    [comment, found] = cutPrefix(afterValue, ';');
-    if (found) {
-      yield {
-        lno,
-        kind: TokenKind.Comment,
-        content: comment,
-        error: checkUtf8(comment) || undefined,
-      };
+  for (let line of input.split(/[ \t]*(?:\r\n|\r|\n)/)) {
+    lno += 1;
+    let [_line, indent, content] = line.match(/^([ \t]*)(.*)$/)!;
+    for (const token of tokenizeLine(indent, content)) {
+      yield { lno, ...token };
     }
   }
 
-  // Handle any remaining multiline
-  if (multiline) {
-    if (multilineValue !== '') {
-      const finalContent = trimRight(multilineValue, ' \t\r\n');
-      yield {
-        lno: multilineLno,
-        kind: TokenKind.MultilineScalar,
-        content: finalContent,
-        error: checkUtf8(finalContent) || undefined,
-      };
-    } else {
-      yield {
-        lno: multilineLno,
-        kind: TokenKind.MultilineScalar,
-        content: '',
-        error: new Error('missing multiline value'),
-      };
-    }
+  if (multilineIndent == "") {
+    throw new Error("missing multiline value");
+  }
+  if (multilineIndent) {
+    yield {
+      lno: multilineLno,
+      kind: "scalar",
+      content: multilineValue,
+    };
   }
 }
 
@@ -217,121 +148,89 @@ function* tokenize(input: string): Generator<Token, void, unknown> {
  * Tokens iterates over tokens in the input string.
  *
  * The raw tokens are post-processed to maintain the invariants that:
- *   - Indent and Outdent are always paired correctly
- *   - (ignoring Comment) after a ListItem or a MapKey,
- *     you will always get any of Scalar, MultilineHint, NoValue or Indent
- *   - after a MultilineHint you will always get a MultilineScalar
- *   - within a given section you will only find ListItem or MapKey, not a mix.
+ *   - The first token (if present) is either "item" or "key"
+ *   - After an "item" or "key", you will get either "scalar", "null", or "indent"
+ *   - After an "indent", you will get either "item" or "key"
+ *   - After "scalar" or "null", you will get either "item" or "key" (or "outdent")
+ *   - At a given indentation level, you will only find either "item"s, or "keys", not both
+ *   - Each "indent" is paired with an "outdent".
  *
- * Any parse errors are reported in Token.error. The parser is tolerant to errors,
- * though the resulting document may not be what the user intended, so you should
- * handle errors appropriately.
+ * An error will be thrown on invalid CONL,
  */
-export function* tokens(input: Buffer | string): Generator<Token, void, unknown> {
-  const states: ParseState[] = [{ kind: TokenKind.Comment, hasKey: false }];
-  let lastLine = 0;
-  const inputStr = typeof input === 'string' ? input : input.toString('utf8');
+export function* tokens(
+  input: Buffer | string,
+): Generator<Token, void, unknown> {
+  const states: {
+    kind?: "item" | "key";
+    hasKey?: boolean;
+  }[] = [{}];
+  let lastLno = 0;
+  const inputStr = typeof input === "string" ? input : input.toString("utf8");
 
   for (const token of tokenize(inputStr)) {
-    const state = states[states.length - 1];
+    const state = states.at(-1)!;
+    lastLno = token.lno;
 
     switch (token.kind) {
-      case TokenKind.Indent:
-        if (state.hasKey) {
-          state.hasKey = false;
-        } else {
-          let kind = state.kind;
-          if (kind === TokenKind.Comment) {
-            kind = TokenKind.MapKey;
-          }
-          yield {
-            lno: token.lno,
-            kind,
-            content: '',
-            error: new Error('unexpected indent'),
-          };
+      case "indent":
+        if (!state.hasKey) {
+          throw new Error(token.lno + ": unexpected indent");
         }
-        states.push({ kind: TokenKind.Comment, hasKey: false });
+        state.hasKey = false;
+        states.push({});
         break;
 
-      case TokenKind.Outdent:
+      case "outdent":
         states.pop();
         if (state.hasKey) {
           yield {
             lno: token.lno,
-            kind: TokenKind.NoValue,
-            content: '',
+            kind: "null",
           };
         }
         break;
 
-      case TokenKind.ListItem:
-      case TokenKind.MapKey:
-        if (state.kind === TokenKind.Comment) {
+      case "item":
+      case "key":
+        if (!state.kind) {
           state.kind = token.kind;
         }
         if (state.hasKey) {
           yield {
             lno: token.lno,
-            kind: TokenKind.NoValue,
-            content: '',
+            kind: "null",
           };
         }
         state.hasKey = true;
 
-        if (state.kind === TokenKind.MapKey && token.kind === TokenKind.ListItem) {
-          yield {
-            lno: token.lno,
-            kind: TokenKind.MapKey,
-            content: '',
-            error: new Error('unexpected list item'),
-          };
-          continue;
+        if (state.kind === "key" && token.kind === "item") {
+          throw new Error(token.lno + ": unexpected list item");
         }
-        if (state.kind === TokenKind.ListItem && token.kind === TokenKind.MapKey) {
-          yield {
-            lno: token.lno,
-            kind: TokenKind.ListItem,
-            content: '',
-            error: new Error('unexpected map key'),
-          };
-          continue;
+        if (state.kind === "item" && token.kind === "key") {
+          throw new Error(token.lno + ": unexpected map key");
         }
         break;
 
-      case TokenKind.Scalar:
-      case TokenKind.MultilineScalar:
+      case "scalar":
         state.hasKey = false;
         break;
-
-      case TokenKind.Comment:
-      case TokenKind.MultilineHint:
-        // pass-through
-        break;
-
-      default:
-        throw new Error('Unknown token kind');
     }
 
-    lastLine = token.lno;
     yield token;
   }
 
-  // Handle remaining states
   while (states.length > 0) {
-    const state = states[states.length - 1];
+    const state = states.at(-1)!;
     if (state.hasKey) {
       yield {
-        lno: lastLine,
-        kind: TokenKind.NoValue,
-        content: '',
+        lno: lastLno,
+        kind: "null",
       };
     }
     if (states.length > 1) {
       yield {
-        lno: lastLine,
-        kind: TokenKind.Outdent,
-        content: '',
+        lno: lastLno,
+        kind: "outdent",
       };
     }
     states.pop();
