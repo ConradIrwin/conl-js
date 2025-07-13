@@ -16,7 +16,7 @@ export function decodeLiteral(lno: number, input: string): string {
     return input;
   }
   if (!input.endsWith('"')) {
-    throw new Error(lno + ": unclosed quotes");
+    throw new Error(lno + 1 + ": unclosed quotes");
   }
 
   return input
@@ -63,18 +63,43 @@ const SPLIT_LINE = new RegExp(
 /**
  * Tokenize a CONL input string into raw tokens
  */
-function* tokenize(input: string): Generator<Token> {
-  const stack: string[] = [""];
+export function* tokens(input: string): Generator<Token> {
+  const stack: { indent: string; kind?: "item" | "key" }[] = [{ indent: "" }];
 
   let lines = input.split(/[ \t]*(?:\r\n|\r|\n)/).map((line) => {
     let [_, indent, content] = line.match(/^([ \t]*)(.*)$/)!;
     return { indent, content };
   });
 
+  // outdent? indent? (key | list), (scalar) ?
+
   let lno = 0;
+  let lastLno = -1;
   while (lno < lines.length) {
     let { indent, content } = lines[lno];
     for (const token of tokenizeLine(indent, content)) {
+      if (token.kind == "outdent" && lastLno > -1) {
+        yield { lno: lastLno, kind: "null" };
+        lastLno = -1;
+      } else if (token.kind == "item" || token.kind == "key") {
+        if (!stack.at(-1)!.kind) {
+          stack.at(-1)!.kind = token.kind;
+        } else if (stack.at(-1)!.kind == "item" && token.kind == "key") {
+          throw new Error(lno + 1 + ": unexpected map key");
+        } else if (stack.at(-1)!.kind == "key" && token.kind == "item") {
+          throw new Error(lno + 1 + ": unexpected list item");
+        }
+        if (lastLno > -1) {
+          yield { lno: lastLno, kind: "null" };
+        }
+        lastLno = lno;
+      } else if (
+        token.kind == "indent" ||
+        token.kind == "scalar" ||
+        token.kind == "multiline"
+      ) {
+        lastLno = -1;
+      }
       if (token.kind == "multiline") {
         yield { lno: lno, ...consumeMultiline(indent) };
       } else {
@@ -85,6 +110,14 @@ function* tokenize(input: string): Generator<Token> {
     lno += 1;
   }
 
+  if (lastLno > -1) {
+    yield { lno: lastLno, kind: "null" };
+  }
+  while (stack.length > 1) {
+    stack.pop();
+    yield { lno, kind: "outdent" };
+  }
+
   function* tokenizeLine(
     indent: string,
     line: string,
@@ -93,13 +126,13 @@ function* tokenize(input: string): Generator<Token> {
       return;
     }
 
-    while (!indent.startsWith(stack.at(-1)!)) {
+    while (!indent.startsWith(stack.at(-1)!.indent)) {
       stack.pop();
       yield { kind: "outdent" };
     }
 
-    if (indent !== stack[stack.length - 1]) {
-      stack.push(indent);
+    if (indent !== stack[stack.length - 1].indent) {
+      stack.push({ indent });
       yield { kind: "indent" };
     }
     let [_, key, tail] = line.match(SPLIT_LINE)!;
@@ -110,7 +143,7 @@ function* tokenize(input: string): Generator<Token> {
       yield { kind: "item" };
     }
 
-    if (tail.match(/^"""(?![ \t]*")/)) {
+    if (tail?.match(/^"""(?![ \t]*")/)) {
       yield { kind: "multiline" };
     } else if (tail) {
       yield { kind: "scalar", content: decodeLiteral(lno, tail) };
@@ -137,99 +170,6 @@ function* tokenize(input: string): Generator<Token> {
       let { indent, content } = lines[++lno];
       result += "\n" + indent.replace(prefix, "") + content;
     }
-    return { kind: "scalar", content: result };
-  }
-}
-
-/**
- * Tokens iterates over tokens in the input string.
- *
- * The raw tokens are post-processed to maintain the invariants that:
- *   - The first token (if present) is either "item" or "key"
- *   - After an "item" or "key", you will get either "scalar", "null", or "indent"
- *   - After an "indent", you will get either "item" or "key"
- *   - After "scalar" or "null", you will get either "item" or "key" (or "outdent")
- *   - At a given indentation level, you will only find either "item"s, or "keys", not both
- *   - Each "indent" is paired with an "outdent".
- *
- * An error will be thrown on invalid CONL,
- */
-export function* tokens(
-  input: Buffer | string,
-): Generator<Token, void, unknown> {
-  const states: {
-    kind?: "item" | "key";
-    hasKey?: boolean;
-  }[] = [{}];
-  let lastLno = 0;
-  const inputStr = typeof input === "string" ? input : input.toString("utf8");
-
-  for (const token of tokenize(inputStr)) {
-    const state = states.at(-1)!;
-    lastLno = token.lno;
-
-    switch (token.kind) {
-      case "indent":
-        if (!state.hasKey) {
-          throw new Error(token.lno + ": unexpected indent");
-        }
-        state.hasKey = false;
-        states.push({});
-        break;
-
-      case "outdent":
-        states.pop();
-        if (state.hasKey) {
-          yield {
-            lno: token.lno,
-            kind: "null",
-          };
-        }
-        break;
-
-      case "item":
-      case "key":
-        if (!state.kind) {
-          state.kind = token.kind;
-        }
-        if (state.hasKey) {
-          yield {
-            lno: token.lno,
-            kind: "null",
-          };
-        }
-        state.hasKey = true;
-
-        if (state.kind === "key" && token.kind === "item") {
-          throw new Error(token.lno + ": unexpected list item");
-        }
-        if (state.kind === "item" && token.kind === "key") {
-          throw new Error(token.lno + ": unexpected map key");
-        }
-        break;
-
-      case "scalar":
-        state.hasKey = false;
-        break;
-    }
-
-    yield token;
-  }
-
-  while (states.length > 0) {
-    const state = states.at(-1)!;
-    if (state.hasKey) {
-      yield {
-        lno: lastLno,
-        kind: "null",
-      };
-    }
-    if (states.length > 1) {
-      yield {
-        lno: lastLno,
-        kind: "outdent",
-      };
-    }
-    states.pop();
+    return { kind: "scalar", content: result.replace(/\n+$/, "") };
   }
 }
