@@ -9,4 +9,8 @@ describe("CONL", () => {
     const input = "= b\n= c";
     expect(parse(input)).toEqual(["b", "c"]);
   });
+  it("should parse multiline strings", () => {
+    const input = `= """\n c\n =`;
+    expect(parse(input)).toEqual(["c\n="]);
+  });
 });

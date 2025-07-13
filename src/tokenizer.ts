@@ -59,38 +59,36 @@ const SPLIT_LINE = new RegExp(
     `))?` +
     `[ \t]*(?:;|$)`,
 );
+
 /**
  * Tokenize a CONL input string into raw tokens
  */
 function* tokenize(input: string): Generator<Token> {
   const stack: string[] = [""];
-  let multilineIndent: string | undefined;
-  let multilineValue = "";
-  let multilineLno = 0;
+
+  let lines = input.split(/[ \t]*(?:\r\n|\r|\n)/).map((line) => {
+    let [_, indent, content] = line.match(/^([ \t]*)(.*)$/)!;
+    return { indent, content };
+  });
 
   let lno = 0;
-
-  function* tokenizeLine(indent: string, line: string): Generator<TokenKind> {
-    if (multilineIndent) {
-      if (indent.startsWith(multilineIndent) || line === "") {
-        multilineValue += "\n" + indent.replace(multilineIndent, "") + line;
-        return;
+  while (lno < lines.length) {
+    let { indent, content } = lines[lno];
+    for (const token of tokenizeLine(indent, content)) {
+      if (token.kind == "multiline") {
+        yield { lno: lno, ...consumeMultiline(indent) };
+      } else {
+        yield { lno: lno, ...token };
       }
-      yield { kind: "scalar", content: multilineValue };
-      multilineIndent = undefined;
-      multilineValue = "";
-    } else if (multilineIndent === "") {
-      if (line == "") {
-        return;
-      } else if (indent.startsWith(stack.at(-1)!) && indent !== stack.at(-1)) {
-        multilineIndent = indent;
-        multilineValue = line;
-        multilineLno = lno;
-        return;
-      }
-      throw new Error(lno + ": missing multiline value");
     }
 
+    lno += 1;
+  }
+
+  function* tokenizeLine(
+    indent: string,
+    line: string,
+  ): Generator<TokenKind | { kind: "multiline" }> {
     if (line === "" || line.startsWith(";")) {
       return;
     }
@@ -112,35 +110,34 @@ function* tokenize(input: string): Generator<Token> {
       yield { kind: "item" };
     }
 
-    if (!tail) {
-      return;
-    }
-
     if (tail.match(/^"""(?![ \t]*")/)) {
-      multilineIndent = "";
-      return;
-    }
-
-    yield { kind: "scalar", content: decodeLiteral(lno, tail) };
-  }
-
-  for (let line of input.split(/[ \t]*(?:\r\n|\r|\n)/)) {
-    lno += 1;
-    let [_line, indent, content] = line.match(/^([ \t]*)(.*)$/)!;
-    for (const token of tokenizeLine(indent, content)) {
-      yield { lno, ...token };
+      yield { kind: "multiline" };
+    } else if (tail) {
+      yield { kind: "scalar", content: decodeLiteral(lno, tail) };
     }
   }
 
-  if (multilineIndent == "") {
-    throw new Error("missing multiline value");
-  }
-  if (multilineIndent) {
-    yield {
-      lno: multilineLno,
-      kind: "scalar",
-      content: multilineValue,
-    };
+  function consumeMultiline(indent: string): TokenKind {
+    while (lno + 1 < lines.length && lines[lno + 1].content == "") {
+      lno++;
+    }
+    if (
+      lno + 1 == lines.length ||
+      !lines[lno + 1].indent.startsWith(indent) ||
+      lines[lno + 1].indent == indent
+    ) {
+      throw new Error(lno + 1 + ": missing multiline value");
+    }
+
+    let { indent: prefix, content: result } = lines[++lno];
+    while (
+      lno + 1 < lines.length &&
+      (lines[lno + 1].indent.startsWith(prefix) || lines[lno + 1].content == "")
+    ) {
+      let { indent, content } = lines[++lno];
+      result += "\n" + indent.replace(prefix, "") + content;
+    }
+    return { kind: "scalar", content: result };
   }
 }
 
