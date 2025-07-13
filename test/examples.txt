@@ -1,11 +1,3 @@
-c = """asd ; comment?
-    false
-d = 1.5
-
----
-{"c":"false","d":"1.5"}
-
-===
 a = b
 ---
 {"a":"b"}
@@ -129,3 +121,18 @@ a = ; empty
 c = ""
 ---
 {"a":null,"c":""}
+
+===
+c = """asd ; comment?
+    false
+d = 1.5
+---
+{"c":"false","d":"1.5"}
+
+===
+a =
+  c = """
+    wowo
+d = 1.5
+---
+{"a":{"c":"wowo"},"d":"1.5"}

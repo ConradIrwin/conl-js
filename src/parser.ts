@@ -1,4 +1,4 @@
-import { Token, tokens } from "./tokenizer";
+import { Token, tokens } from "./";
 
 export type Conl = string | null | ConlMap | ConlList;
 export interface ConlMap {

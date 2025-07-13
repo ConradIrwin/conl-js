@@ -8,10 +8,7 @@ type TokenKind =
 
 export type Token = { lno: number } & TokenKind;
 
-/**
- * Decode a quoted (or unqouted) literal.
- */
-export function decodeLiteral(lno: number, input: string): string {
+function decodeLiteral(lno: number, input: string): string {
   if (!input.startsWith('"')) {
     return input;
   }
@@ -21,7 +18,7 @@ export function decodeLiteral(lno: number, input: string): string {
 
   return input
     .substring(1, input.length - 1)
-    .replace(/\\\{([0-9a-fA-F]){1,8}\}|\\(.)/g, (match, hex, c) => {
+    .replace(/\\\{([^}]*)\}|\\(.)/g, (match, hex, c) => {
       switch (c) {
         case "n":
           return "\n";
@@ -37,11 +34,12 @@ export function decodeLiteral(lno: number, input: string): string {
 
       const codePoint = parseInt(hex, 16);
       if (
+        hex?.length > 8 ||
         isNaN(codePoint) ||
         codePoint > 0x10ffff ||
         (codePoint >= 0xd800 && codePoint <= 0xdfff)
       ) {
-        throw new Error(`invalid escape code: ${match}`);
+        throw new Error(lno + 1 + `: invalid escape code: ${match}`);
       }
 
       return String.fromCodePoint(codePoint);
@@ -81,6 +79,11 @@ export function* tokens(input: string): Generator<Token> {
       if (token.kind == "outdent" && lastLno > -1) {
         yield { lno: lastLno, kind: "null" };
         lastLno = -1;
+      } else if (token.kind == "indent") {
+        if (lastLno == -1) {
+          throw new Error(lno + 1 + ": unexpected indent");
+        }
+        lastLno = -1;
       } else if (token.kind == "item" || token.kind == "key") {
         if (!stack.at(-1)!.kind) {
           stack.at(-1)!.kind = token.kind;
@@ -93,11 +96,7 @@ export function* tokens(input: string): Generator<Token> {
           yield { lno: lastLno, kind: "null" };
         }
         lastLno = lno;
-      } else if (
-        token.kind == "indent" ||
-        token.kind == "scalar" ||
-        token.kind == "multiline"
-      ) {
+      } else if (token.kind == "scalar" || token.kind == "multiline") {
         lastLno = -1;
       }
       if (token.kind == "multiline") {

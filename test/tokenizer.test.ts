@@ -1,50 +1,78 @@
-import { parse } from "../src/parser";
+import { parse } from "../src";
 import { readFileSync } from "fs";
 import { join } from "path";
 
 describe("CONL", () => {
-  it("should parse a simple object", () => {
-    const input = "a = b";
-    expect(parse(input)).toEqual({ a: "b" });
+  it("should parse examples from examples.txt correctly", () => {
+    const examplesPath = join(__dirname, "examples.txt");
+    const content = readFileSync(examplesPath, "utf-8");
+
+    // Split by === to get individual examples
+    const examples = content
+      .replace(/␊/g, "\r")
+      .split("\n===\n")
+      .filter((ex) => ex.trim());
+
+    let failed = 0;
+
+    for (let example of examples) {
+      const [conlPart, jsonPart] = example.split("\n---\n");
+      const expected = JSON.parse(jsonPart.trim());
+      let actual;
+
+      try {
+        actual = parse(conlPart);
+        expect(actual).toEqual(expected);
+      } catch (error) {
+        failed += 1;
+        console.log("input = ", JSON.stringify(conlPart));
+        console.log("expected = ", jsonPart);
+        console.log("actual = ", JSON.stringify(actual));
+        console.log("error = ", error);
+      }
+    }
+
+    expect(failed).toBe(0);
   });
-  it("should parse a simple array", () => {
-    const input = "= b\n= c";
-    expect(parse(input)).toEqual(["b", "c"]);
-  });
-  it("should parse multiline strings", () => {
-    const input = `= """\n c\n =`;
-    expect(parse(input)).toEqual(["c\n="]);
-  });
 
-  describe("CONL examples from file", () => {
-    it("should parse examples from examples.txt correctly", () => {
-      const examplesPath = join(__dirname, "examples.txt");
-      const content = readFileSync(examplesPath, "utf-8");
+  it("should produce expected errors from errors.txt", () => {
+    const errorsPath = join(__dirname, "errors.txt");
+    const content = readFileSync(errorsPath, "utf-8");
 
-      // Split by === to get individual examples
-      const examples = content
-        .replace(/␊/g, "\r")
-        .split("\n===\n")
-        .filter((ex) => ex.trim());
+    // Split by === to get individual examples
+    const examples = content
+      .replace(/␊/g, "\r")
+      .replace(/␉/g, "\t")
+      .replace(/\?/g, "\u{d800}")
+      .replace(/␣/g, " ")
+      .split("\n===\n")
+      .filter((ex) => ex.trim());
 
-      let failed = 0;
+    let failed = 0;
 
-      examples.forEach((example) => {
-        const [conlPart, jsonPart] = example.split("\n---\n");
-        const expected = JSON.parse(jsonPart.trim());
-        const actual = parse(conlPart);
+    for (let example of examples) {
+      const [conlPart, errorPart] = example.split("\n---\n");
+      const expectedError = errorPart.trim();
+      // the typescript parser allows WTF-8, same as JS.
+      if (expectedError.match(/invalid UTF-8/)) {
+        continue;
+      }
 
-        try {
-          expect(actual).toEqual(expected);
-        } catch (error) {
+      try {
+        parse(conlPart);
+        throw new Error("no error");
+      } catch (error: any) {
+        // Check if the error message matches the expected format
+        const errorMessage = error.message || error.toString();
+        if (!errorMessage.includes(expectedError)) {
           failed += 1;
           console.log("input = ", JSON.stringify(conlPart));
-          console.log("expected = ", jsonPart);
-          console.log("actual = ", JSON.stringify(actual));
+          console.log("expected error = ", expectedError);
+          console.log("actual error = ", errorMessage);
         }
-      });
+      }
+    }
 
-      expect(failed).toBe(0);
-    });
+    expect(failed).toBe(0);
   });
 });

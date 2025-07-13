@@ -8,6 +8,7 @@
     "build": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "clean": "rm -rf dist",
     "prepare": "npm run build",
     "format": "prettier --write src/**/*.ts",
@@ -41,6 +42,18 @@
     ],
     "transform": {
       "^.+\\.ts$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 95,
+        "lines": 95,
+        "statements": 95
+      }
     }
   },
   "files": [
