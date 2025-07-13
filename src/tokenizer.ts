@@ -18,7 +18,10 @@ function decodeLiteral(lno: number, input: string): string {
 
   return input
     .substring(1, input.length - 1)
-    .replace(/\\\{([^}]*)\}|\\(.)/g, (match, hex, c) => {
+    .replace(/\\\{([^}]*)\}|\\(.)|(")/g, (match, hex, c, q) => {
+      if (q) {
+        throw new Error(lno + 1 + `: characters after quotes`);
+      }
       switch (c) {
         case "n":
           return "\n";

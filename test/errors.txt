@@ -116,3 +116,9 @@ a
 =
 ---
 1: missing multiline value
+
+===
+= """"
+=
+---
+1: characters after quotes
