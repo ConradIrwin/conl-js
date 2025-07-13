@@ -1,5 +1,8 @@
 {
-  "name": "conl",
+  "name": "conl-typescript",
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "1.0.0",
   "description": "CONL is a post-minimal, human-centric configuration language.",
   "main": "dist/index.js",
@@ -20,8 +23,13 @@
     "config",
     "configuration"
   ],
-  "author": "",
+  "author": "Conrad Irwin <conrad.irwin@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ConradIrwin/conl-typescript.git"
+  },
+  "homepage": "https://conl.dev",
   "devDependencies": {
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",

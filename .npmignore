@@ -1,0 +1,54 @@
+# Source files (not needed since we publish dist)
+src/
+test/
+
+# Exclude test files from dist
+dist/test/
+dist/**/*.test.*
+dist/**/*.spec.*
+
+# Development files
+coverage/
+.gitignore
+.prettierrc
+.eslintrc
+jest.config.js
+tsconfig.json
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Development dependencies
+node_modules/
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__/
+__mocks__/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation source files
+docs/
+
+# Temporary files
+*.tmp
+.cache/
