@@ -75,4 +75,28 @@ describe("CONL", () => {
 
     expect(failed).toBe(0);
   });
+
+  it("should apply the reviver", () => {
+    const input = `listen
+  timeout = 3s`;
+
+    const result = parse(input, (key, value: any) => {
+      // Convert timeout values like "3s" to milliseconds
+      if (key === "timeout" && typeof value === "string") {
+        const match = value.match(/^(\d+)s$/);
+        if (match) {
+          return parseInt(match[1]) * 1000;
+        }
+      }
+      return value;
+    });
+
+    console.log("Result:", JSON.stringify(result, null, 2));
+
+    expect(result).toEqual({
+      listen: {
+        timeout: 3000,
+      },
+    });
+  });
 });

@@ -6,12 +6,20 @@ export interface ConlMap {
 }
 export interface ConlList extends Array<Conl> {}
 
-/**
- * Parse CONL content into JavaScript values
- */
-export function parse(input: string): ConlMap | ConlList {
+export function parse(input: string): ConlMap | ConlList;
+export function parse<T>(
+  input: string,
+  reviver: (key: string, value: any) => T,
+): T;
+export function parse(
+  input: string,
+  reviver?: (key: string, value: any) => any,
+): any {
+  reviver ??= (_, value) => value;
   const tokenIterator = tokens(input);
-  return sectionToValue(tokenIterator) ?? {};
+  const result = sectionToValue(tokenIterator, reviver) ?? {};
+
+  return reviver("", result);
 }
 
 /**
@@ -19,7 +27,8 @@ export function parse(input: string): ConlMap | ConlList {
  */
 function sectionToValue(
   tokenIterator: Generator<Token>,
-): ConlMap | ConlList | null {
+  reviver: (key: string, value: any) => any,
+): any {
   let result: ConlMap | ConlList | null = null;
   let currentKey: string | undefined;
 
@@ -39,21 +48,21 @@ function sectionToValue(
 
       case "scalar":
       case "null":
-        let value = "content" in token ? token.content : null;
+        const value: any = "content" in token ? token.content : null;
         if (Array.isArray(result)) {
-          result.push(value);
+          result.push(reviver.call(result, String(result.length), value));
         } else if (result && currentKey !== undefined) {
-          result[currentKey] = value;
+          result[currentKey] = reviver.call(result, currentKey, value);
           currentKey = undefined;
         }
         break;
 
       case "indent":
-        const nestedValue = sectionToValue(tokenIterator);
+        const nestedValue: any = sectionToValue(tokenIterator, reviver);
         if (Array.isArray(result)) {
-          result.push(nestedValue);
+          result.push(reviver.call(result, String(result.length), nestedValue));
         } else if (result && currentKey !== undefined) {
-          result[currentKey] = nestedValue;
+          result[currentKey] = reviver.call(result, currentKey, nestedValue);
           currentKey = undefined;
         }
         break;

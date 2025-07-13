@@ -1,7 +1,7 @@
 {
-  "name": "@conl/parser",
+  "name": "conl",
   "version": "1.0.0",
-  "description": "TypeScript implementation of CONL (CONcise Language) parser",
+  "description": "CONL is a post-minimal, human-centric configuration language.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
