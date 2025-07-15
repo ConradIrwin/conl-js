@@ -7,23 +7,23 @@ This repository contains the Typescript/Javascript implementation.
 ### Installation
 
 ```
-npm install conl
+npm install conl-js
 ```
 
 ### Usage
 
 ```typescript
 
-import {parse} from 'conl';
+import {parse} from 'conl-js';
 
 parse("a = b")
 // => {"a": "b"}
 ```
 
-Unlike JSON, CONL has no special syntax for numbers or booleans. If you'd like to interpret some scalars as
+Unlike JSON, CONL has no special syntax for numbers or booleans. You can use a reviver function (as in JSON.parse) to cast values back to the correct type.
 
 ```typescript
-import {parse} from 'conl';
+import {parse} from 'conl-js';
 
 parse("timeout = 3s", (key, value) => {
   // Convert timeout values like "3s" to milliseconds

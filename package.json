@@ -1,5 +1,5 @@
 {
-  "name": "conl-typescript",
+  "name": "conl-js",
   "publishConfig": {
     "access": "public"
   },
@@ -27,7 +27,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ConradIrwin/conl-typescript.git"
+    "url": "git+https://github.com/ConradIrwin/conl-js.git"
   },
   "homepage": "https://conl.dev",
   "devDependencies": {
