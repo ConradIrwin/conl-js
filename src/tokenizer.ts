@@ -67,8 +67,18 @@ const SPLIT_LINE = new RegExp(
 export function* tokens(input: string): Generator<Token> {
   const stack: { indent: string; kind?: "item" | "key" }[] = [{ indent: "" }];
 
-  let lines = input.split(/[ \t]*(?:\r\n|\r|\n)/).map((line) => {
-    let [_, indent, content] = line.match(/^([ \t]*)(.*)$/)!;
+  let lines = input.split(/[ \t]*(?:\r\n|\r|\n)/).map((line, lno) => {
+    let [_, indent, rawContent] = line.match(/^([ \t]*)(.*)$/)!;
+    let content = rawContent.replace(
+      /[\uD800-\uDBFF][\uDC00-\uDFFF]?|[\uDC00-\uDFFF]/g,
+      (m) => {
+        if (m.length == 1) {
+          throw new Error(lno + 1 + ": invalid UTF-8");
+        }
+        return m;
+      },
+    );
+
     return { indent, content };
   });
 

@@ -53,10 +53,6 @@ describe("CONL", () => {
     for (let example of examples) {
       const [conlPart, errorPart] = example.split("\n---\n");
       const expectedError = errorPart.trim();
-      // the typescript parser allows WTF-8, same as JS.
-      if (expectedError.match(/invalid UTF-8/)) {
-        continue;
-      }
 
       try {
         parse(conlPart);
